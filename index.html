@@ -1,17 +1,17 @@
-<!DOCTYPE html>
+ 
+ <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Zhivoy Bloknot</title>
-  <script src="https://cdn.jsdelivr.net/npm/gun/gun.js"></script>
+  <title>Zhivoy bloknot</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body, html {
       height: 100%;
-      width: 100%;
       background-color: #121212;
-      color: #e0e0e0;
+      color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       overflow: hidden;
     }
@@ -27,56 +27,102 @@
       line-height: 1.6;
       resize: none;
     }
-    #hint {
+    #status-bar {
       position: fixed;
       bottom: 12px;
       right: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
       font-size: 12px;
-      color: #666666;
+      color: #9ca3af;
+      background: rgba(0, 0, 0, 0.65);
+      padding: 6px 12px;
+      border-radius: 20px;
       pointer-events: none;
-      transition: opacity 0.5s;
+    }
+    #dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background-color: #ef4444;
+    }
+    #dot.online {
+      background-color: #10b981;
+      box-shadow: 0 0 8px #10b981;
     }
   </style>
 </head>
 <body>
 
-  <textarea id="editor" placeholder="Nachni pechatat... Dvoynoy tap - na ves ekran"></textarea>
-  <div id="hint">Dvoynoy tap - polnyy ekran</div>
+  <textarea id="editor" placeholder="Nachni pechatat... Dvoynoy tap - polnyy ekran"></textarea>
+  
+  <div id="status-bar">
+    <div id="dot"></div>
+    <span id="status-text">Podklyuchenie...</span>
+  </div>
 
   <script>
-    // Aktualnye relay-servery Gun.js
-    const gun = Gun([
-      'https://peer.wallie.io/gun',
-      'https://gundb-relay-mlccl.ondigitalocean.app/gun'
-    ]);
-
-    // Tvoy unikalnyy klyuch (mozhno zamenit na lyuboe svoe slovo)
-    const NOTE_ID = 'cherry837-bloknot-2026';
-    const note = gun.get(NOTE_ID);
+    const TOPIC = 'cherry837/rtn002/2026/live8821';
+    const CLIENT_ID = 'dev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9);
 
     const editor = document.getElementById('editor');
-    let isRemoteUpdate = false;
+    const dot = document.getElementById('dot');
+    const statusText = document.getElementById('status-text');
 
-    // Otpravka teksta pri pechati
+    const client = mqtt.connect('wss://broker.emqx.io:8084/mqtt', {
+      clientId: CLIENT_ID,
+      clean: true,
+      connectTimeout: 5000,
+      reconnectPeriod: 2000
+    });
+
+    client.on('connect', () => {
+      dot.classList.add('online');
+      statusText.innerText = 'Onlayn';
+      client.subscribe(TOPIC, { qos: 0 });
+    });
+
+    client.on('reconnect', () => {
+      dot.classList.remove('online');
+      statusText.innerText = 'Perepodklyuchenie...';
+    });
+
+    client.on('offline', () => {
+      dot.classList.remove('online');
+      statusText.innerText = 'Oflayn';
+    });
+
+    client.on('error', () => {
+      dot.classList.remove('online');
+      statusText.innerText = 'Oshibka svyazi';
+    });
+
+    client.on('message', (topic, message) => {
+      if (topic !== TOPIC) return;
+      try {
+        const data = JSON.parse(message.toString());
+        if (data.sender !== CLIENT_ID && typeof data.text === 'string') {
+          if (editor.value !== data.text) {
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            editor.value = data.text;
+            editor.setSelectionRange(start, end);
+          }
+        }
+      } catch (e) {}
+    });
+
     editor.addEventListener('input', () => {
-      if (!isRemoteUpdate) {
-        note.put({ text: editor.value });
+      if (client.connected) {
+        const payload = JSON.stringify({
+          sender: CLIENT_ID,
+          text: editor.value
+        });
+        client.publish(TOPIC, payload, { qos: 0, retain: true });
       }
     });
 
-    // Poluchenie teksta s drugikh ustroystv v realnom vremeni
-    note.on((data) => {
-      if (data && data.text !== undefined && data.text !== editor.value) {
-        const cursorStart = editor.selectionStart;
-        const cursorEnd = editor.selectionEnd;
-        isRemoteUpdate = true;
-        editor.value = data.text;
-        editor.setSelectionRange(cursorStart, cursorEnd);
-        isRemoteUpdate = false;
-      }
-    });
-
-    // Dvoynoy tap / klik - polnyy ekran
     function toggleFullScreen() {
       if (!document.fullscreenElement && !document.webkitFullscreenElement) {
         if (document.documentElement.requestFullscreen) {
@@ -109,3 +155,4 @@
 
 </body>
 </html>
+
